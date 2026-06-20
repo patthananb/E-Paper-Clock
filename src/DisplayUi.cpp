@@ -47,19 +47,6 @@ static void drawCentered(const char* s, int y) {
   display.print(s);
 }
 
-// Countdown ring: filled band from the top, clockwise, for `frac` of a circle.
-static void drawRing(int cx, int cy, int rOut, int rIn, float frac) {
-  if (frac < 0) frac = 0;
-  if (frac > 1) frac = 1;
-  int maxDeg = (int)(frac * 360.0f + 0.5f);
-  for (int deg = 0; deg < maxDeg; deg++) {
-    float a = (deg - 90) * PI / 180.0f;
-    float ca = cosf(a), sa = sinf(a);
-    for (int r = rIn; r <= rOut; r++)
-      display.drawPixel(cx + (int)(r * ca), cy + (int)(r * sa), GxEPD_BLACK);
-  }
-}
-
 static void fmtHM(int mins, char* out, size_t n) {
   if (mins < 0) mins = 0;
   int h = mins / 60, m = mins % 60;
@@ -83,26 +70,6 @@ static void drawBar(int x, int y, int w, int h, int pct) {
   display.drawRect(x, y, w, h, GxEPD_BLACK);
   int fill = (w - 2) * pct / 100;
   if (fill > 0) display.fillRect(x + 1, y + 1, fill, h - 2, GxEPD_BLACK);
-}
-
-// Pomodoro centre (ring + countdown + status), drawn by both full + partial.
-static void drawPomodoroBody(int mm, int ss, float frac, bool active, bool timeUp) {
-  if (!active && !timeUp) {
-    display.setFont(&FreeMonoBold12pt7b);
-    drawCentered("HOLD BOOT", 100);
-    drawCentered("To start timer", 130);
-    return;
-  }
-  const int cx = 100, cy = 112, rOut = 64, rIn = 56;
-  if (active) drawRing(cx, cy, rOut, rIn, frac);
-
-  char t[8];
-  snprintf(t, sizeof(t), "%02d:%02d", mm, ss);
-  display.setFont(&FreeMonoBold18pt7b);     // fits inside the ring
-  drawCentered(t, cy + 8);
-
-  display.setFont(&FreeMonoBold12pt7b);
-  drawCentered(timeUp ? "TIME UP" : "focus", 192);
 }
 
 // ---- public -----------------------------------------------------------------
@@ -191,25 +158,6 @@ void DisplayUi::showClock(bool haveTime, const struct tm& tm, float tempC, int b
     else               strcpy(c, "-- C");
     display.setFont(&FreeMonoBold18pt7b);
     drawCentered(c, 185);
-  } while (display.nextPage());
-}
-
-void DisplayUi::showPomodoro(int mm, int ss, float frac, bool active, bool timeUp, int batPct) {
-  display.setFullWindow();
-  display.firstPage();
-  do {
-    display.fillScreen(GxEPD_WHITE);
-    drawHeader("Pomodoro", batPct);
-    drawPomodoroBody(mm, ss, frac, active, timeUp);
-  } while (display.nextPage());
-}
-
-void DisplayUi::updatePomodoro(int mm, int ss, float frac, bool active, bool timeUp) {
-  display.setPartialWindow(30, 38, 140, 160);
-  display.firstPage();
-  do {
-    display.fillScreen(GxEPD_WHITE);
-    drawPomodoroBody(mm, ss, frac, active, timeUp);
   } while (display.nextPage());
 }
 

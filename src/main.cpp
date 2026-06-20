@@ -1,9 +1,7 @@
-// ClaudeMeterEpaper — Claude usage / clock / pomodoro on a Waveshare
-// ESP32-S3-ePaper-1.54. BLE peripheral for the Clawdmeter daemon.
+// ClaudeMeterEpaper — Claude usage + clock on a Waveshare ESP32-S3-ePaper-1.54.
+// BLE peripheral for the Clawdmeter daemon.
 //
-// Modes (PWR button cycles): Claude usage -> Clock -> Pomodoro.
-// Pomodoro: hold BOOT to start a 25-min timer, short-press BOOT to stop.
-// Beep on finish is stubbed pending ES8311 driver integration (see Beeper).
+// Modes (PWR button cycles): Claude usage <-> Clock.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -14,8 +12,6 @@
 #include "TempSensor.h"
 #include "TimeSync.h"
 #include "Buttons.h"
-#include "Pomodoro.h"
-#include "Beeper.h"
 #include "ClawdBle.h"
 #include "DisplayUi.h"
 
@@ -26,16 +22,12 @@ static BatteryGauge battery;
 static TempSensor   temp;
 static TimeSync     timeSync;
 static Buttons      buttons;
-static Pomodoro     pomo;
-static Beeper       beeper;
 static ClawdBle     ble;
 static UsageData    usage;
 
-enum Mode { MODE_USAGE, MODE_CLOCK, MODE_POMODORO, MODE_COUNT };
+enum Mode { MODE_USAGE, MODE_CLOCK, MODE_COUNT };
 static Mode     g_mode          = MODE_USAGE;
-static bool     g_pomoTimeUp    = false;
 static uint32_t g_lastBatteryMs = 0;   // charging sweep / battery refresh (10s)
-static uint32_t g_lastPomoDraw  = 0;   // pomodoro tick (5s)
 static uint32_t g_lastClockDraw = 0;   // clock refresh (1min)
 static uint32_t g_lastUsageDraw = 0;   // usage re-check (10min)
 static uint32_t g_lastPayloadMs = 0;   // last daemon payload arrival
@@ -59,10 +51,6 @@ static void renderCurrent() {
       ui.showClock(haveTime, tm, temp.lastC(), b);
       break;
     }
-    case MODE_POMODORO:
-      ui.showPomodoro(pomo.remainingMin(), pomo.remainingSec(),
-                      pomo.fraction(), pomo.isActive(), g_pomoTimeUp, b);
-      break;
     default: break;
   }
 }
@@ -82,7 +70,6 @@ void setup() {
   ui.showStatus("waiting BLE...", battery.lastPercent());
 
   timeSync.begin();   // one-shot NTP before BLE radio comes up
-  beeper.begin();
   ble.begin();
 
   Serial.println("ready (press 'p' to restart advertising)");
@@ -94,40 +81,9 @@ void loop() {
   // PWR click: cycle mode. Re-arm the per-mode refresh timers from now.
   if (buttons.tookPwrClick()) {
     g_mode = (Mode)((g_mode + 1) % MODE_COUNT);
-    g_pomoTimeUp = false;
-    g_lastClockDraw = g_lastUsageDraw = g_lastPomoDraw = millis();
+    g_lastClockDraw = g_lastUsageDraw = millis();
     Serial.printf("mode -> %d\n", g_mode);
     renderCurrent();
-  }
-
-  // BOOT hold: start pomodoro and jump to its screen.
-  if (buttons.tookBootHold()) {
-    pomo.start();
-    g_pomoTimeUp   = false;
-    g_mode         = MODE_POMODORO;
-    g_lastPomoDraw = millis();
-    renderCurrent();
-  }
-
-  // BOOT short press: stop a running pomodoro.
-  if (buttons.tookBootShort() && pomo.isActive()) {
-    pomo.stop();
-    renderCurrent();
-  }
-
-  // Pomodoro finished -> beep + show TIME UP.
-  if (pomo.tickFinished()) {
-    g_pomoTimeUp = true;
-    beeper.beep();
-    if (g_mode == MODE_POMODORO) renderCurrent();
-  }
-
-  // Pomodoro countdown: fast partial redraw of the ring + time every 5s.
-  if (g_mode == MODE_POMODORO && pomo.isActive() &&
-      millis() - g_lastPomoDraw >= 5000) {
-    g_lastPomoDraw = millis();
-    ui.updatePomodoro(pomo.remainingMin(), pomo.remainingSec(),
-                      pomo.fraction(), true, false);
   }
 
   // Clock: full refresh once a minute while shown.

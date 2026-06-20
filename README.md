@@ -10,18 +10,17 @@
 > This project would not exist without it.
 
 A desk companion for the **Waveshare ESP32-S3-ePaper-1.54** (200×200 B/W,
-SSD1681) that shows your Claude Code usage, a clock, and a Pomodoro timer on
-e-paper. It's an e-paper take on
+SSD1681) that shows your Claude Code usage and a clock on e-paper. It's an
+e-paper take on
 [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) and reuses that
 project's Python daemon **unmodified** by speaking its BLE GATT contract.
 
-Three modes, cycled with the **PWR** button:
+Two modes, cycled with the **PWR** button:
 
 | Mode | Shows |
 |------|-------|
 | **Claude** | 5h and 7d rate-limit utilization (%, bar, reset countdown) + a daemon-alive dot |
 | **Clock** | `HH:MM` (WiFi/NTP), date, and SHTC3 temperature |
-| **Pomodoro** | 25-min countdown with a depleting ring |
 
 Every screen carries a 4-segment battery icon (top-right) that animates a
 left-to-right sweep while charging.
@@ -30,12 +29,8 @@ left-to-right sweep while charging.
 
 | Button | Action |
 |--------|--------|
-| **PWR** (GPIO18) | Click → cycle mode (Claude → Clock → Pomodoro) |
-| **BOOT** (GPIO0) | Hold → start the Pomodoro timer; short press → stop it |
+| **PWR** (GPIO18) | Click → cycle mode (Claude ↔ Clock) |
 | Serial `p` | Restart BLE advertising |
-
-> The Pomodoro idle screen prompts **HOLD BOOT / To start timer**. When the
-> timer ends the screen shows **TIME UP**.
 
 ## Why a separate repo (not a fork of Clawdmeter)
 
@@ -65,9 +60,7 @@ Firmware is split into small single-responsibility classes under `src/`:
 | `BatteryGauge.{h,cpp}` | ADC battery %, charging heuristic |
 | `TempSensor.{h,cpp}` | SHTC3 temperature (I2C) |
 | `TimeSync.{h,cpp}` | One-shot WiFi NTP sync |
-| `Buttons.{h,cpp}` | Debounced BOOT (hold/short) + PWR (click) |
-| `Pomodoro.{h,cpp}` | Countdown timer + remaining fraction |
-| `Beeper.{h,cpp}` | ES8311 beep (stub — see Known limitations) |
+| `Buttons.{h,cpp}` | Debounced PWR click |
 
 ### BLE GATT contract (identical to Clawdmeter)
 
@@ -146,8 +139,8 @@ payload: {"s":19,"sr":294,"w":14,"wr":5214,"st":"allowed","ok":true}
 ```
 
 On the panel: boot shows `waiting BLE...`; once payloads arrive the Claude
-screen shows the 5h/7d blocks with a filled daemon-alive dot. PWR cycles modes;
-holding BOOT starts the Pomodoro ring.
+screen shows the 5h/7d blocks with a filled daemon-alive dot. PWR cycles
+between the Claude and Clock screens.
 
 ## Resource usage
 
@@ -156,14 +149,11 @@ Build: `pio run`, env `esp32-s3-epaper-154`, ESP32-S3 (8 MB flash), Arduino
 
 | Segment | Used | Total | % |
 |---------|------|-------|---|
-| RAM | 59432 B | 327680 B | 18.1% |
-| Flash | 1307197 B | 3342336 B | 39.1% |
+| RAM | 59392 B | 327680 B | 18.1% |
+| Flash | 1301553 B | 3342336 B | 38.9% |
 
 ## Known limitations
 
-- **Beep is stubbed.** The speaker is behind the ES8311 codec (no passive
-  buzzer), so a beep needs the ES8311 driver + an I2S tone. `Beeper` currently
-  only logs to serial; Pomodoro end shows **TIME UP** on screen instead.
 - **Charging detection is a heuristic.** The board exposes no charge-status
   GPIO, so `BatteryGauge::isCharging()` infers it from cell voltage (≥4.15 V).
   It can't distinguish a full battery on USB from one mid-charge.
