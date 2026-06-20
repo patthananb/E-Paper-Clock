@@ -1,107 +1,170 @@
 # ClaudeMeterEpaper
 
-Claude Code usage meter on a **Waveshare ESP32-S3-ePaper-1.54** (200×200 B/W,
-SSD1681). An e-paper take on [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter):
-shows your 5-hour and 7-day rate-limit utilization as percentages + bars, with
-minutes-to-reset.
+A desk companion for the **Waveshare ESP32-S3-ePaper-1.54** (200×200 B/W,
+SSD1681) that shows your Claude Code usage, a clock, and a Pomodoro timer on
+e-paper. It's an e-paper take on
+[Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) and reuses that
+project's Python daemon **unmodified** by speaking its BLE GATT contract.
 
-## Why a separate repo (not a fork)
+Three modes, cycled with the **PWR** button:
 
-- **Different hardware stack.** Clawdmeter targets AMOLED touch boards driven by
-  LVGL. This board is e-paper (GxEPD2, slow full-refresh, no animation). Almost
-  no firmware is shared.
-- **License hygiene.** Clawdmeter bundles proprietary Anthropic fonts and the
-  copyrighted Clawd mascot, and ships **no LICENSE file** (default: all rights
-  reserved). Forking would pull that in.
+| Mode | Shows |
+|------|-------|
+| **Claude** | 5h and 7d rate-limit utilization (%, bar, reset countdown) + a daemon-alive dot |
+| **Clock** | `HH:MM` (WiFi/NTP), date, and SHTC3 temperature |
+| **Pomodoro** | 25-min countdown with a depleting ring |
 
-Instead this repo contains **firmware only** and reuses Clawdmeter's Python
-daemon **unmodified** by matching its BLE GATT contract — you *run* their
-daemon, you don't copy its code. No redistribution, no license entanglement.
+Every screen carries a 4-segment battery icon (top-right) that animates a
+left-to-right sweep while charging.
+
+## Buttons
+
+| Button | Action |
+|--------|--------|
+| **PWR** (GPIO18) | Click → cycle mode (Claude → Clock → Pomodoro) |
+| **BOOT** (GPIO0) | Hold → start the Pomodoro timer; short press → stop it |
+| Serial `p` | Restart BLE advertising |
+
+> The Pomodoro idle screen prompts **HOLD BOOT / To start timer**. When the
+> timer ends the screen shows **TIME UP**.
+
+## Why a separate repo (not a fork of Clawdmeter)
+
+- **Different hardware.** Clawdmeter targets AMOLED/LVGL boards; this is
+  e-paper (GxEPD2, slow full-refresh, no animation). Almost no firmware is
+  shared.
+- **License hygiene.** Clawdmeter bundles proprietary fonts and a copyrighted
+  mascot and ships no LICENSE. This repo is firmware-only and just *runs* their
+  daemon — no redistribution, no entanglement.
 
 ## Architecture
 
 ```
-Clawdmeter daemon (their repo, run as-is)         this firmware (ESP32-S3)
+Clawdmeter daemon (their repo, run as-is)        this firmware (ESP32-S3)
   poll Anthropic rate-limit headers  ──BLE write──▶  parse JSON ─▶ draw e-paper
 ```
 
-### BLE GATT contract (kept identical to Clawdmeter)
+Firmware is split into small single-responsibility classes under `src/`:
+
+| File | Responsibility |
+|------|----------------|
+| `main.cpp` | Orchestration: mode FSM, timers, glue |
+| `Pins.h` | All GPIO + I2C address constants |
+| `DisplayUi.{h,cpp}` | E-paper panel + every screen render |
+| `ClawdBle.{h,cpp}` | NimBLE peripheral (the daemon's GATT contract) |
+| `UsageData.h` | Usage payload struct + JSON parser |
+| `BatteryGauge.{h,cpp}` | ADC battery %, charging heuristic |
+| `TempSensor.{h,cpp}` | SHTC3 temperature (I2C) |
+| `TimeSync.{h,cpp}` | One-shot WiFi NTP sync |
+| `Buttons.{h,cpp}` | Debounced BOOT (hold/short) + PWR (click) |
+| `Pomodoro.{h,cpp}` | Countdown timer + remaining fraction |
+| `Beeper.{h,cpp}` | ES8311 beep (stub — see Known limitations) |
+
+### BLE GATT contract (identical to Clawdmeter)
 
 | Item | Value |
 |------|-------|
-| Device name | `Clawdmeter` |
+| Device name | `Clawdmeter` (in scan-response data) |
 | Service | `4c41555a-4465-7669-6365-000000000001` |
-| RX char (daemon → device, write) | `...0002` |
-| REQ char (device → daemon, notify) | `...0004` |
+| RX char (daemon → device, write) | `…0002` |
+| REQ char (device → daemon, notify) | `…0004` |
 
-### Payload (written by daemon to RX char)
+Payload written by the daemon to the RX char:
 
 ```json
 {"s":42,"sr":118,"w":7,"wr":9320,"st":"allowed","ok":true}
 ```
 
-| Key | Meaning |
-|-----|---------|
-| `s`  | 5h utilization % |
-| `sr` | minutes until 5h reset |
-| `w`  | 7d utilization % |
-| `wr` | minutes until 7d reset |
-| `st` | 5h status string |
-| `ok` | poll succeeded |
+`s`/`w` = 5h/7d utilization %; `sr`/`wr` = minutes to reset; `st` = status;
+`ok` = poll succeeded.
 
-## Pin map (same board as the button demo)
+## Pin map (Waveshare ESP32-S3-ePaper-1.54)
 
-| EPD signal | GPIO | | EPD signal | GPIO |
+| Signal | GPIO | | Signal | GPIO |
 |---|---|---|---|---|
-| SCK | 12 | | DC | 10 |
-| MOSI | 13 | | RST | 9 |
-| CS | 11 | | BUSY | 8 |
-| PWR gate | 6 (LOW=on) | | | |
+| EPD SCK | 12 | | EPD DC | 10 |
+| EPD MOSI | 13 | | EPD RST | 9 |
+| EPD CS | 11 | | EPD BUSY | 8 |
+| EPD PWR gate | 6 (LOW=on) | | Battery ADC | 4 (÷2) |
+| BOOT button | 0 | | PWR button | 18 |
+| VBAT power latch | 17 (HIGH=on) | | I2C SDA / SCL | 47 / 48 |
+
+I2C devices: SHTC3 temp `0x70`, PCF85063 RTC `0x51`, ES8311 codec `0x18`.
 
 ## Build / flash
 
+Requires [PlatformIO](https://platformio.org/).
+
 ```bash
-pio run                # build
-pio run -t upload      # flash (auto-detects port)
+cp src/wifi_config.example.h src/wifi_config.h   # then edit your WiFi + TZ
+pio run                                          # build
+pio run -t upload                                # flash (auto-detect port)
 pio device monitor -b 115200
 ```
 
-## Run the daemon (drives the display)
+`wifi_config.h` is gitignored, so your credentials never get committed. Leave
+`WIFI_SSID` empty to skip WiFi; the clock will show **WiFi down**.
 
-From a clone of the Clawdmeter repo:
+## Run the daemon (drives the Claude usage screen)
+
+From a clone of the [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter)
+repo:
 
 ```bash
 cd Clawdmeter/daemon
-pip install -r requirements.txt   # bleak, httpx
+pip install bleak httpx
 python3 claude_usage_daemon.py
 ```
 
-It reads your Claude Code token (macOS Keychain `Claude Code-credentials`, or
-`~/.claude/.credentials.json`), finds the BLE device named `Clawdmeter`, and
-pushes a payload every ~60 s.
+It reads your Claude Code OAuth token (macOS Keychain `Claude Code-credentials`,
+or `~/.claude/.credentials.json`), polls the Anthropic rate-limit headers, finds
+the BLE device named `Clawdmeter`, and pushes a payload every ~60 s. On macOS,
+grant Bluetooth permission to the terminal on first run. For auto-start at login,
+use Clawdmeter's `install-mac.sh` (installs a launchd agent).
 
 ## Testing
 
-Expected serial (115200):
+Expected serial at boot (115200), with the daemon running:
 
 ```
+wifi: connecting to <ssid>.....
+ntp: 2026-06-21 01:06
+ready (press 'p' to restart advertising)
 advertising as Clawdmeter
+searching for daemon...
 connected
-payload: {"s":42,"sr":118,"w":7,"wr":9320,"st":"allowed","ok":true}
+payload: {"s":19,"sr":294,"w":14,"wr":5214,"st":"allowed","ok":true}
 ```
 
-Expected screen: `waiting BLE...` on boot → `disconnected` if daemon drops →
-two labeled blocks (`5h` / `7d`) each with a big %, a filled bar, and a reset
-line, once payloads arrive.
-
-> Hardware runtime not yet captured. Flash, run the daemon, and paste real
-> serial + a photo here.
+On the panel: boot shows `waiting BLE...`; once payloads arrive the Claude
+screen shows the 5h/7d blocks with a filled daemon-alive dot. PWR cycles modes;
+holding BOOT starts the Pomodoro ring.
 
 ## Resource usage
 
-Build: `pio run`, env `esp32-s3-epaper-154`, ESP32-S3-PICO-1-N8R8, Arduino.
+Build: `pio run`, env `esp32-s3-epaper-154`, ESP32-S3 (8 MB flash), Arduino
+(arduino-esp32 3.3.8 / NimBLE-Arduino 2.x).
 
-| Segment | Used    | Total     | %     |
-|---------|---------|-----------|-------|
-| RAM     | 38492 B | 327680 B  | 11.7% |
-| Flash   | 730157 B| 3342336 B | 21.8% |
+| Segment | Used | Total | % |
+|---------|------|-------|---|
+| RAM | 59432 B | 327680 B | 18.1% |
+| Flash | 1307197 B | 3342336 B | 39.1% |
+
+## Known limitations
+
+- **Beep is stubbed.** The speaker is behind the ES8311 codec (no passive
+  buzzer), so a beep needs the ES8311 driver + an I2S tone. `Beeper` currently
+  only logs to serial; Pomodoro end shows **TIME UP** on screen instead.
+- **Charging detection is a heuristic.** The board exposes no charge-status
+  GPIO, so `BatteryGauge::isCharging()` infers it from cell voltage (≥4.15 V).
+  It can't distinguish a full battery on USB from one mid-charge.
+- **PWR button polarity** is assumed active-low; the firmware prints
+  `PWR pin -> N` on each edge so you can confirm/flip it for your unit.
+
+## Credits & license
+
+- Daemon and BLE contract: [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter)
+  by Hermann Björgvin — run as-is, not redistributed here.
+- Libraries: GxEPD2, Adafruit GFX, ArduinoJson, NimBLE-Arduino.
+
+Released under the MIT License (see `LICENSE`).
