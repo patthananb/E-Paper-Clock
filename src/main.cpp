@@ -130,16 +130,16 @@ static void drawTopRight(int batPct, bool dot) {
   if (dot) display.fillCircle(cx, cy, r, GxEPD_BLACK);
   else     display.drawCircle(cx, cy, r, GxEPD_BLACK);
 
-  // Battery body + terminal nub, half-size, snug to the left of the dot.
-  const int bx = 157, by = 7, bw = 22, bh = 8;
+  // Battery body + terminal nub, left of the dot with a little gap.
+  const int bx = 146, by = 6, bw = 28, bh = 10;
   display.drawRect(bx, by, bw, bh, GxEPD_BLACK);
-  display.fillRect(bx + bw, by + 2, 2, bh - 4, GxEPD_BLACK);
+  display.fillRect(bx + bw, by + 3, 2, bh - 6, GxEPD_BLACK);
 
   // Fill N of 4 segments. <13%->0, then 25/50/75/100 thresholds.
   int segs = (batPct + 12) / 25;
   if (segs < 0) segs = 0;
   if (segs > 4) segs = 4;
-  const int segW = 4, gap = 1, ix = bx + 1, iy = by + 1, ih = bh - 2;
+  const int segW = 5, gap = 1, ix = bx + 1, iy = by + 1, ih = bh - 2;
   for (int i = 0; i < segs; i++)
     display.fillRect(ix + i * (segW + gap), iy, segW, ih, GxEPD_BLACK);
 }
