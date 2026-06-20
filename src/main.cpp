@@ -26,6 +26,9 @@
 #define EPD_BUSY  8
 #define EPD_PWR   6   // active-low power gate: LOW = panel ON
 
+// ---- BOOT button (press = blink the heartbeat now) ----
+#define BOOT_BTN_PIN  0      // active-low, internal pull-up
+
 // ---- Battery sense (same board as BatteryCheck) ----
 #define BAT_ADC_PIN   4      // ADC1_CH3
 #define BAT_DIVIDER   2.0f   // on-board /2 resistor divider
@@ -244,6 +247,8 @@ static bool parsePayload(const String& json, Metrics& out) {
 void setup() {
   Serial.begin(115200);
 
+  pinMode(BOOT_BTN_PIN, INPUT_PULLUP);
+
   analogReadResolution(12);
   analogRead(BAT_ADC_PIN);                         // configure pin as analog first
   analogSetPinAttenuation(BAT_ADC_PIN, ADC_11db);  // full ~0-3.3V range
@@ -299,6 +304,20 @@ static void startAdv() {
 }
 
 void loop() {
+  // BOOT button: each press blinks the heartbeat dot immediately.
+  static int      lastBtn   = HIGH;
+  static uint32_t lastBtnMs = 0;
+  int btn = digitalRead(BOOT_BTN_PIN);
+  if (btn != lastBtn && millis() - lastBtnMs > 40) {   // debounced edge
+    lastBtnMs = millis();
+    lastBtn   = btn;
+    if (btn == LOW) {                                  // pressed
+      g_aliveDot     = !g_aliveDot;
+      g_lastTopRight = millis();                       // resync auto-blink
+      updateTopRight();
+    }
+  }
+
   // Every 15s: blink the alive dot + refresh battery, via a fast partial
   // update of the top-right box only (no full-screen flash).
   if (millis() - g_lastTopRight >= 15000) {
