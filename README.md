@@ -1,5 +1,14 @@
 # ClaudeMeterEpaper
 
+> # ⚠️ DISCLAIMER — THIS IDEA IS STOLEN ⚠️
+>
+> **The entire concept is shamelessly lifted from
+> [Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) by Hermann
+> Björgvin.** The "show your Claude usage on a tiny desk gadget" idea, the BLE
+> GATT contract, and the Python daemon are all theirs — I just re-skinned it for
+> an e-paper panel. All credit for the original goes to them. Go star their repo.
+> This project would not exist without it.
+
 A desk companion for the **Waveshare ESP32-S3-ePaper-1.54** (200×200 B/W,
 SSD1681) that shows your Claude Code usage, a clock, and a Pomodoro timer on
 e-paper. It's an e-paper take on
