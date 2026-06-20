@@ -11,11 +11,16 @@
 
 #include <Arduino.h>
 #include <SPI.h>
+#include <Wire.h>
+#include <WiFi.h>
+#include <time.h>
 #include <GxEPD2_BW.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
 #include <Fonts/FreeMonoBold18pt7b.h>
+#include <Fonts/FreeMonoBold24pt7b.h>
 #include <ArduinoJson.h>
 #include <NimBLEDevice.h>
+#include "wifi_config.h"
 
 // ---- EPD pins (Waveshare ESP32-S3-ePaper-1.54) ----
 #define EPD_SCK  12
@@ -26,8 +31,15 @@
 #define EPD_BUSY  8
 #define EPD_PWR   6   // active-low power gate: LOW = panel ON
 
-// ---- BOOT button (press = blink the heartbeat now) ----
-#define BOOT_BTN_PIN  0      // active-low, internal pull-up
+// ---- Buttons (pins from Waveshare ESP32-S3-ePaper-1.54 demo) ----
+#define BOOT_BTN_PIN  0      // BOOT: press = blink heartbeat (active-low, pull-up)
+#define PWR_BTN_PIN   18     // PWR : click = cycle screen; hold 3s = latch power
+#define VBAT_PWR_PIN  17     // drive HIGH to latch battery power on
+
+// ---- I2C (SHTC3 temp/humidity + PCF85063 RTC share the bus) ----
+#define I2C_SDA_PIN   47
+#define I2C_SCL_PIN   48
+#define SHTC3_ADDR    0x70
 
 // ---- Battery sense (same board as BatteryCheck) ----
 #define BAT_ADC_PIN   4      // ADC1_CH3
@@ -61,6 +73,11 @@ static void startAdv();                         // fwd decl (used in onDisconnec
 static uint32_t        g_lastTopRight = 0;      // last partial refresh (millis)
 static bool            g_aliveDot     = false;  // toggles each refresh = "alive"
 static int             g_batPct       = 0;      // last battery percent
+
+// ---- Screen mode (PWR click cycles) ----
+enum Screen { SCREEN_USAGE, SCREEN_CLOCK, SCREEN_COUNT };
+static Screen          g_screen     = SCREEN_USAGE;
+static float           g_tempC      = NAN;      // last SHTC3 reading
 
 // Parsed metrics
 struct Metrics {
@@ -116,6 +133,52 @@ static float readBatteryVolts() {
   return (mv / 1000.0f) * BAT_DIVIDER;
 }
 
+// ---- SHTC3 temperature (I2C). Returns °C, or leaves out untouched on error. ----
+static bool readSHTC3(float& tC) {
+  Wire.beginTransmission(SHTC3_ADDR);          // wake-up
+  Wire.write(0x35); Wire.write(0x17);
+  if (Wire.endTransmission() != 0) return false;
+  delayMicroseconds(300);
+
+  Wire.beginTransmission(SHTC3_ADDR);          // measure T first, no clock-stretch
+  Wire.write(0x78); Wire.write(0x66);
+  if (Wire.endTransmission() != 0) return false;
+  delay(15);                                   // ~12ms conversion
+
+  if (Wire.requestFrom(SHTC3_ADDR, 6) != 6) return false;
+  uint8_t b[6];
+  for (int i = 0; i < 6; i++) b[i] = Wire.read();
+  uint16_t rawT = ((uint16_t)b[0] << 8) | b[1];
+  tC = -45.0f + 175.0f * (float)rawT / 65535.0f;
+
+  Wire.beginTransmission(SHTC3_ADDR);          // sleep
+  Wire.write(0xB0); Wire.write(0x98);
+  Wire.endTransmission();
+  return true;
+}
+
+// ---- WiFi NTP one-shot: connect, sync system clock, then drop WiFi (so it
+// doesn't fight NimBLE for the radio). System time persists while powered. ----
+static void wifiTimeSync() {
+  if (strlen(WIFI_SSID) == 0) { Serial.println("wifi: no SSID set, clock disabled"); return; }
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.printf("wifi: connecting to %s", WIFI_SSID);
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 12000) { delay(250); Serial.print("."); }
+  Serial.println();
+  if (WiFi.status() != WL_CONNECTED) { Serial.println("wifi: failed"); WiFi.mode(WIFI_OFF); return; }
+
+  configTzTime(TZ_INFO, NTP_SERVER1, NTP_SERVER2);
+  struct tm tm;
+  if (getLocalTime(&tm, 8000))
+    Serial.printf("ntp: %04d-%02d-%02d %02d:%02d\n",
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min);
+  else
+    Serial.println("ntp: no time");
+  WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
+}
+
 // ---- Rendering ----
 // Reset countdown as "Xh Ym" (or "Ym" under an hour).
 static void fmtHM(int mins, char* out, size_t n) {
@@ -123,6 +186,17 @@ static void fmtHM(int mins, char* out, size_t n) {
   int h = mins / 60, m = mins % 60;
   if (h > 0) snprintf(out, n, "%dh %dm", h, m);
   else       snprintf(out, n, "%dm", m);
+}
+
+// Longer countdown: "Xd Yh" while >= 24h, then falls back to "Xh Ym".
+static void fmtDHM(int mins, char* out, size_t n) {
+  if (mins < 0) mins = 0;
+  if (mins >= 24 * 60) {
+    int d = mins / (24 * 60), h = (mins % (24 * 60)) / 60;
+    snprintf(out, n, "%dd %dh", d, h);
+  } else {
+    fmtHM(mins, out, n);
+  }
 }
 
 // Top-right corner: a 4-segment battery icon (25/50/75/100%) left of a small
@@ -196,7 +270,7 @@ static void renderMetrics(const Metrics& m) {
     drawBar(8, 164, 184, 14, m.w);
     display.setFont(&FreeMonoBold12pt7b);
     display.setCursor(8, 196);
-    fmtHM(m.wr, rbuf, sizeof(rbuf));
+    fmtDHM(m.wr, rbuf, sizeof(rbuf));
     display.printf("reset %s", rbuf);
   } while (display.nextPage());
 }
@@ -230,6 +304,61 @@ static void updateTopRight() {
   } while (display.nextPage());
 }
 
+// Clock screen: big HH:MM, date, and SHTC3 temperature.
+static void renderClock() {
+  display.setRotation(0);
+  display.setTextColor(GxEPD_BLACK);
+  display.setFullWindow();
+  display.firstPage();
+  do {
+    display.fillScreen(GxEPD_WHITE);
+    display.setFont(&FreeMonoBold12pt7b);
+    display.setCursor(8, 24);
+    display.print("Clock");
+    drawTopRight(g_batPct, g_aliveDot);
+    display.drawFastHLine(0, 34, 200, GxEPD_BLACK);
+
+    struct tm tm;
+    bool haveTime = getLocalTime(&tm, 50);
+    int16_t bx, by; uint16_t bw, bh;
+
+    char t[16];
+    if (haveTime) strftime(t, sizeof(t), "%H:%M", &tm);
+    else          strcpy(t, "--:--");
+    display.setFont(&FreeMonoBold24pt7b);
+    display.getTextBounds(t, 0, 0, &bx, &by, &bw, &bh);
+    display.setCursor((200 - bw) / 2 - bx, 100);
+    display.print(t);
+
+    if (haveTime) {
+      char d[24];
+      strftime(d, sizeof(d), "%a %d %b", &tm);
+      display.setFont(&FreeMonoBold12pt7b);
+      display.getTextBounds(d, 0, 0, &bx, &by, &bw, &bh);
+      display.setCursor((200 - bw) / 2 - bx, 135);
+      display.print(d);
+    }
+
+    char c[16];
+    if (!isnan(g_tempC)) snprintf(c, sizeof(c), "%.1f C", g_tempC);
+    else                 strcpy(c, "-- C");
+    display.setFont(&FreeMonoBold18pt7b);
+    display.getTextBounds(c, 0, 0, &bx, &by, &bw, &bh);
+    display.setCursor((200 - bw) / 2 - bx, 185);
+    display.print(c);
+  } while (display.nextPage());
+}
+
+// Render whichever screen is active (refresh temp before drawing the clock).
+static void renderCurrent() {
+  if (g_screen == SCREEN_CLOCK) {
+    readSHTC3(g_tempC);
+    renderClock();
+  } else {
+    renderMetrics(g_m);
+  }
+}
+
 static bool parsePayload(const String& json, Metrics& out) {
   JsonDocument doc;
   if (deserializeJson(doc, json)) return false;
@@ -248,6 +377,11 @@ void setup() {
   Serial.begin(115200);
 
   pinMode(BOOT_BTN_PIN, INPUT_PULLUP);
+  pinMode(PWR_BTN_PIN,  INPUT_PULLUP);
+  pinMode(VBAT_PWR_PIN, OUTPUT);
+  digitalWrite(VBAT_PWR_PIN, HIGH);                // latch battery power on
+
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
   analogReadResolution(12);
   analogRead(BAT_ADC_PIN);                         // configure pin as analog first
@@ -262,7 +396,10 @@ void setup() {
   display.init(115200, true, 2, false);
 
   g_batPct = batteryPercent(readBatteryVolts());  // so the boot screen shows it
+  readSHTC3(g_tempC);
   renderStatus("waiting BLE...");
+
+  wifiTimeSync();   // one-shot NTP before BLE radio comes up
 
   // BLE peripheral matching the Clawdmeter daemon's expectations.
   NimBLEDevice::init(DEVICE_NAME);
@@ -318,6 +455,21 @@ void loop() {
     }
   }
 
+  // PWR button: each click cycles the screen (usage <-> clock).
+  static int      lastPwr   = HIGH;
+  static uint32_t lastPwrMs = 0;
+  int pwr = digitalRead(PWR_BTN_PIN);
+  if (pwr != lastPwr && millis() - lastPwrMs > 50) {
+    lastPwrMs = millis();
+    lastPwr   = pwr;
+    Serial.printf("PWR pin -> %d\n", pwr);             // calibrate polarity
+    if (pwr == LOW) {                                  // pressed (assume active-low)
+      g_screen = (Screen)((g_screen + 1) % SCREEN_COUNT);
+      Serial.printf("screen -> %s\n", g_screen == SCREEN_CLOCK ? "clock" : "usage");
+      renderCurrent();
+    }
+  }
+
   // Every 15s: blink the alive dot + refresh battery, via a fast partial
   // update of the top-right box only (no full-screen flash).
   if (millis() - g_lastTopRight >= 15000) {
@@ -344,7 +496,7 @@ void loop() {
 
   if (g_connEvent) {
     g_connEvent = false;
-    if (!g_connected) renderStatus("disconnected");
+    if (!g_connected) { if (g_screen == SCREEN_USAGE) renderStatus("disconnected"); }
     else              Serial.println("connected");
   }
 
@@ -356,8 +508,11 @@ void loop() {
     portEXIT_CRITICAL(&g_mux);
 
     Serial.printf("payload: %s\n", json.c_str());
-    if (parsePayload(json, g_m)) renderMetrics(g_m);
-    else                         Serial.println("bad JSON");
+    if (parsePayload(json, g_m)) {
+      if (g_screen == SCREEN_USAGE) renderMetrics(g_m);  // don't clobber clock view
+    } else {
+      Serial.println("bad JSON");
+    }
   }
 
   delay(20);

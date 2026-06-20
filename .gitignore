@@ -11,3 +11,6 @@
 *.bin
 *.elf
 *.map
+
+# Secrets — WiFi credentials for NTP
+src/wifi_config.h
