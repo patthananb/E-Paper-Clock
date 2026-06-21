@@ -18,6 +18,21 @@ static constexpr int BAT_X = 146, BAT_Y = 6, BAT_W = 28, BAT_H = 10;
 // full-flash. Covers the 24pt HH:MM drawn at baseline y=100.
 static constexpr int TIME_X = 0, TIME_Y = 66, TIME_W = 200, TIME_H = 46;
 
+// Clock bottom reading line (18pt at baseline y=185). Cycles temp <-> humidity
+// each minute, partial-refreshed alongside the time tick.
+static constexpr int READ_X = 0, READ_Y = 160, READ_W = 200, READ_H = 40;
+
+// Format the cycling bottom reading: temperature or relative humidity.
+static void fmtReading(bool showHumidity, float tempC, float rh, char* out, size_t n) {
+  if (showHumidity) {
+    if (!isnan(rh)) snprintf(out, n, "%.0f%% RH", rh);
+    else            snprintf(out, n, "-- RH");
+  } else {
+    if (!isnan(tempC)) snprintf(out, n, "%.1f C", tempC);
+    else               snprintf(out, n, "-- C");
+  }
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 // Battery icon with `litSegs` of 4 filled (sweep animation passes raw counts).
@@ -135,7 +150,8 @@ void DisplayUi::showUsage(const UsageData& m, int batPct, bool daemonAlive) {
   } while (display.nextPage());
 }
 
-void DisplayUi::showClock(bool haveTime, const struct tm& tm, float tempC, int batPct) {
+void DisplayUi::showClock(bool haveTime, const struct tm& tm, bool showHumidity,
+                          float tempC, float rh, int batPct) {
   display.setFullWindow();
   display.firstPage();
   do {
@@ -158,8 +174,7 @@ void DisplayUi::showClock(bool haveTime, const struct tm& tm, float tempC, int b
     }
 
     char c[16];
-    if (!isnan(tempC)) snprintf(c, sizeof(c), "%.1f C", tempC);
-    else               strcpy(c, "-- C");
+    fmtReading(showHumidity, tempC, rh, c, sizeof(c));
     display.setFont(&FreeMonoBold18pt7b);
     drawCentered(c, 185);
   } while (display.nextPage());
@@ -177,6 +192,20 @@ void DisplayUi::updateClockTime(bool haveTime, const struct tm& tm) {
     display.fillScreen(GxEPD_WHITE);
     display.setFont(&FreeMonoBold24pt7b);
     drawCentered(t, 100);
+  } while (display.nextPage());
+}
+
+// Minute tick: redraw the bottom reading line via partial update, cycling
+// between temperature and humidity. No flash, rest of the clock untouched.
+void DisplayUi::updateClockReading(bool showHumidity, float tempC, float rh) {
+  char c[16];
+  fmtReading(showHumidity, tempC, rh, c, sizeof(c));
+  display.setPartialWindow(READ_X, READ_Y, READ_W, READ_H);
+  display.firstPage();
+  do {
+    display.fillScreen(GxEPD_WHITE);
+    display.setFont(&FreeMonoBold18pt7b);
+    drawCentered(c, 185);
   } while (display.nextPage());
 }
 

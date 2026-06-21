@@ -30,6 +30,7 @@ static Mode     g_mode          = MODE_USAGE;
 static uint32_t g_lastBatteryMs = 0;   // charging sweep / battery refresh (10s)
 static uint32_t g_lastClockDraw = 0;   // clock minute tick (partial, 1min)
 static uint32_t g_lastClockFull = 0;   // clock full refresh (ghost clean, 30min)
+static bool     g_clockShowHum  = false; // clock bottom line: false=temp, true=humidity
 static uint32_t g_lastUsageDraw = 0;   // usage re-check (10min)
 static uint32_t g_lastPayloadMs = 0;   // last daemon payload arrival
 
@@ -49,7 +50,7 @@ static void renderCurrent() {
       temp.read();
       struct tm tm;
       bool haveTime = timeSync.localTime(tm);
-      ui.showClock(haveTime, tm, temp.lastC(), b);
+      ui.showClock(haveTime, tm, g_clockShowHum, temp.lastC(), temp.lastRH(), b);
       break;
     }
     default: break;
@@ -87,17 +88,21 @@ void loop() {
     renderCurrent();   // full draw lays down the clock baseline for partials
   }
 
-  // Clock: every minute redraw only the HH:MM line (partial, no flash).
-  // Once every 30 min do a full refresh to clear e-paper ghosting.
+  // Clock: every minute redraw the HH:MM line and cycle the bottom reading
+  // between temperature and humidity (partial, no flash). Once every 30 min do
+  // a full refresh to clear e-paper ghosting.
   if (g_mode == MODE_CLOCK && millis() - g_lastClockDraw >= 60000) {
     g_lastClockDraw = millis();
+    g_clockShowHum = !g_clockShowHum;      // cycle temp <-> humidity each minute
+    temp.read();
     if (millis() - g_lastClockFull >= 1800000) {
       g_lastClockFull = millis();
       renderCurrent();                     // full clean (flashes once / 30 min)
     } else {
       struct tm tm;
       bool haveTime = timeSync.localTime(tm);
-      ui.updateClockTime(haveTime, tm);    // number only, no flash
+      ui.updateClockTime(haveTime, tm);                                  // number only, no flash
+      ui.updateClockReading(g_clockShowHum, temp.lastC(), temp.lastRH()); // temp/humidity, no flash
     }
   }
 
