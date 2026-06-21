@@ -88,16 +88,24 @@ void loop() {
     renderCurrent();   // full draw lays down the clock baseline for partials
   }
 
-  // BOOT short click in clock mode: refresh the time and toggle temp/humidity
-  // now (partial, no flash). Re-arm the auto-cycle so the next flip is a min away.
-  if (buttons.tookBootClick() && g_mode == MODE_CLOCK) {
-    g_clockShowHum = !g_clockShowHum;
-    g_lastClockDraw = millis();
-    temp.read();
-    struct tm tm;
-    bool haveTime = timeSync.localTime(tm);
-    ui.updateClockTime(haveTime, tm);
-    ui.updateClockReading(g_clockShowHum, temp.lastC(), temp.lastRH());
+  // BOOT short click: action depends on current mode.
+  if (buttons.tookBootClick()) {
+    if (g_mode == MODE_USAGE) {
+      // Ask the daemon for fresh data and re-render immediately.
+      Serial.println("boot click: requesting daemon refresh");
+      ble.requestRefresh();
+      g_lastUsageDraw = millis();            // re-arm 10-min auto cycle
+      renderCurrent();
+    } else if (g_mode == MODE_CLOCK) {
+      // Toggle temp/humidity and refresh the time (partial, no flash).
+      g_clockShowHum = !g_clockShowHum;
+      g_lastClockDraw = millis();
+      temp.read();
+      struct tm tm;
+      bool haveTime = timeSync.localTime(tm);
+      ui.updateClockTime(haveTime, tm);
+      ui.updateClockReading(g_clockShowHum, temp.lastC(), temp.lastRH());
+    }
   }
 
   // BOOT long hold in clock mode: retry the WiFi/NTP sync, then redraw the clock

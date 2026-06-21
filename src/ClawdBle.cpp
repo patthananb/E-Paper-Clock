@@ -16,6 +16,7 @@ static volatile bool g_connected   = false;
 static volatile bool g_advertising = false;
 static String        g_payload;
 static portMUX_TYPE  g_mux = portMUX_INITIALIZER_UNLOCKED;
+static NimBLECharacteristic* g_reqChar = nullptr;  // us -> daemon (notify)
 
 static void startAdv() {
   NimBLEDevice::startAdvertising();
@@ -51,7 +52,7 @@ void ClawdBle::begin() {
   NimBLECharacteristic* rx = svc->createCharacteristic(
       RX_CHAR_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   rx->setCallbacks(new RxCallbacks());
-  svc->createCharacteristic(REQ_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
+  g_reqChar = svc->createCharacteristic(REQ_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
   svc->start();
 
   // 128-bit UUID + flags nearly fill the 31B advert; name goes in scan response
@@ -71,6 +72,13 @@ void ClawdBle::begin() {
 }
 
 void ClawdBle::restartAdvertising() { startAdv(); }
+
+void ClawdBle::requestRefresh() {
+  if (!g_connected || !g_reqChar) return;
+  g_reqChar->setValue("refresh");
+  g_reqChar->notify();
+  Serial.println("BLE: sent refresh request");
+}
 bool ClawdBle::isConnected()   const { return g_connected; }
 bool ClawdBle::isAdvertising() const { return g_advertising; }
 

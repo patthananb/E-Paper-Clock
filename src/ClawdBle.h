@@ -10,6 +10,7 @@ class ClawdBle {
 public:
   void begin();
   void restartAdvertising();
+  void requestRefresh();       ///< notify daemon to push fresh data now
 
   bool isConnected() const;
   bool isAdvertising() const;
