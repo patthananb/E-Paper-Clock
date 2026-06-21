@@ -175,6 +175,11 @@ Build: `pio run`, env `esp32-s3-epaper-154`, ESP32-S3 (8 MB flash), Arduino
   It can't distinguish a full battery on USB from one mid-charge.
 - **PWR button polarity** is assumed active-low; the firmware prints
   `PWR pin -> N` on each edge so you can confirm/flip it for your unit.
+## Hardware Pictures
+
+![Claude Meter](Hardware/ClaudeMeter.jpg)
+
+![Clock](Hardware/Clock.jpg)
 
 ## Credits & license
 
