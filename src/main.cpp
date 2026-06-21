@@ -88,6 +88,18 @@ void loop() {
     renderCurrent();   // full draw lays down the clock baseline for partials
   }
 
+  // BOOT click in clock mode: refresh the time and toggle temp/humidity now
+  // (partial, no flash). Re-arm the auto-cycle so the next flip is a minute away.
+  if (buttons.tookBootClick() && g_mode == MODE_CLOCK) {
+    g_clockShowHum = !g_clockShowHum;
+    g_lastClockDraw = millis();
+    temp.read();
+    struct tm tm;
+    bool haveTime = timeSync.localTime(tm);
+    ui.updateClockTime(haveTime, tm);
+    ui.updateClockReading(g_clockShowHum, temp.lastC(), temp.lastRH());
+  }
+
   // Clock: every minute redraw the HH:MM line and cycle the bottom reading
   // between temperature and humidity (partial, no flash). Once every 30 min do
   // a full refresh to clear e-paper ghosting.
