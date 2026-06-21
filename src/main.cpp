@@ -33,6 +33,7 @@ static uint32_t g_lastClockFull = 0;   // clock full refresh (ghost clean, 30min
 static bool     g_clockShowHum  = false; // clock bottom line: false=temp, true=humidity
 static uint32_t g_lastUsageDraw = 0;   // usage re-check (10min)
 static uint32_t g_lastPayloadMs = 0;   // last daemon payload arrival
+static uint32_t g_lastNtpSync   = 0;   // periodic NTP resync (10min)
 
 static constexpr uint32_t DAEMON_ALIVE_MS = 130000;  // ~2 daemon poll periods
 
@@ -72,6 +73,7 @@ void setup() {
   ui.showStatus("waiting BLE...", battery.lastPercent());
 
   timeSync.begin();   // one-shot NTP before BLE radio comes up
+  g_lastNtpSync = millis();   // arm the periodic resync timer
   ble.begin();
 
   Serial.println("ready (press 'p' to restart advertising)");
@@ -178,6 +180,14 @@ void loop() {
     } else {
       Serial.println("bad JSON");
     }
+  }
+
+  // Every 10 min: resync NTP via WiFi, then put WiFi back to sleep.
+  // Blocking (~12s); BLE drops briefly but NimBLE re-advertises on return.
+  if (millis() - g_lastNtpSync >= 600000) {
+    g_lastNtpSync = millis();
+    Serial.println("periodic NTP resync");
+    timeSync.retry();
   }
 
   // Every 10s: refresh battery. While charging, play the left-to-right sweep.
