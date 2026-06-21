@@ -14,6 +14,10 @@ static GxEPD2_BW<GxEPD2_154_D67, GxEPD2_154_D67::HEIGHT> display(
 // Top-right battery box used by full screens and the partial refresh.
 static constexpr int BAT_X = 146, BAT_Y = 6, BAT_W = 28, BAT_H = 10;
 
+// Clock time-number line. Partial-refreshed on the minute tick so it doesn't
+// full-flash. Covers the 24pt HH:MM drawn at baseline y=100.
+static constexpr int TIME_X = 0, TIME_Y = 66, TIME_W = 200, TIME_H = 46;
+
 // ---- helpers ----------------------------------------------------------------
 
 // Battery icon with `litSegs` of 4 filled (sweep animation passes raw counts).
@@ -158,6 +162,21 @@ void DisplayUi::showClock(bool haveTime, const struct tm& tm, float tempC, int b
     else               strcpy(c, "-- C");
     display.setFont(&FreeMonoBold18pt7b);
     drawCentered(c, 185);
+  } while (display.nextPage());
+}
+
+// Minute tick: redraw only the HH:MM line via a fast partial update. No flash,
+// header/date/temp left untouched. Call showClock() periodically to clear ghosting.
+void DisplayUi::updateClockTime(bool haveTime, const struct tm& tm) {
+  char t[16];
+  if (haveTime) strftime(t, sizeof(t), "%H:%M", &tm);
+  else          strcpy(t, "--:--");
+  display.setPartialWindow(TIME_X, TIME_Y, TIME_W, TIME_H);
+  display.firstPage();
+  do {
+    display.fillScreen(GxEPD_WHITE);
+    display.setFont(&FreeMonoBold24pt7b);
+    drawCentered(t, 100);
   } while (display.nextPage());
 }
 

@@ -28,7 +28,8 @@ static UsageData    usage;
 enum Mode { MODE_USAGE, MODE_CLOCK, MODE_COUNT };
 static Mode     g_mode          = MODE_USAGE;
 static uint32_t g_lastBatteryMs = 0;   // charging sweep / battery refresh (10s)
-static uint32_t g_lastClockDraw = 0;   // clock refresh (1min)
+static uint32_t g_lastClockDraw = 0;   // clock minute tick (partial, 1min)
+static uint32_t g_lastClockFull = 0;   // clock full refresh (ghost clean, 30min)
 static uint32_t g_lastUsageDraw = 0;   // usage re-check (10min)
 static uint32_t g_lastPayloadMs = 0;   // last daemon payload arrival
 
@@ -81,15 +82,23 @@ void loop() {
   // PWR click: cycle mode. Re-arm the per-mode refresh timers from now.
   if (buttons.tookPwrClick()) {
     g_mode = (Mode)((g_mode + 1) % MODE_COUNT);
-    g_lastClockDraw = g_lastUsageDraw = millis();
+    g_lastClockDraw = g_lastUsageDraw = g_lastClockFull = millis();
     Serial.printf("mode -> %d\n", g_mode);
-    renderCurrent();
+    renderCurrent();   // full draw lays down the clock baseline for partials
   }
 
-  // Clock: full refresh once a minute while shown.
+  // Clock: every minute redraw only the HH:MM line (partial, no flash).
+  // Once every 30 min do a full refresh to clear e-paper ghosting.
   if (g_mode == MODE_CLOCK && millis() - g_lastClockDraw >= 60000) {
     g_lastClockDraw = millis();
-    renderCurrent();
+    if (millis() - g_lastClockFull >= 1800000) {
+      g_lastClockFull = millis();
+      renderCurrent();                     // full clean (flashes once / 30 min)
+    } else {
+      struct tm tm;
+      bool haveTime = timeSync.localTime(tm);
+      ui.updateClockTime(haveTime, tm);    // number only, no flash
+    }
   }
 
   // Usage: re-render every 10 min so the daemon-alive dot stays current.
