@@ -8,6 +8,7 @@ namespace cm {
 class TimeSync {
 public:
   void begin();                          ///< connect + NTP, then WiFi off
+  void retry() { begin(); }              ///< re-run the connect + NTP attempt
   bool ok() const { return _ok; }        ///< sync succeeded (else "WiFi down")
   bool localTime(struct tm& out) const;  ///< current local time, false if !ok
 

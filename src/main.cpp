@@ -88,8 +88,8 @@ void loop() {
     renderCurrent();   // full draw lays down the clock baseline for partials
   }
 
-  // BOOT click in clock mode: refresh the time and toggle temp/humidity now
-  // (partial, no flash). Re-arm the auto-cycle so the next flip is a minute away.
+  // BOOT short click in clock mode: refresh the time and toggle temp/humidity
+  // now (partial, no flash). Re-arm the auto-cycle so the next flip is a min away.
   if (buttons.tookBootClick() && g_mode == MODE_CLOCK) {
     g_clockShowHum = !g_clockShowHum;
     g_lastClockDraw = millis();
@@ -98,6 +98,19 @@ void loop() {
     bool haveTime = timeSync.localTime(tm);
     ui.updateClockTime(haveTime, tm);
     ui.updateClockReading(g_clockShowHum, temp.lastC(), temp.lastRH());
+  }
+
+  // BOOT long hold in clock mode: retry the WiFi/NTP sync, then redraw the clock
+  // (~12s blocking while WiFi connects; BLE drops out briefly, then resumes).
+  if (buttons.tookBootHold() && g_mode == MODE_CLOCK) {
+    Serial.println("boot hold: retrying wifi");
+    timeSync.retry();
+    g_lastClockDraw = g_lastClockFull = millis();
+    temp.read();
+    struct tm tm;
+    bool haveTime = timeSync.localTime(tm);
+    ui.showClock(haveTime, tm, g_clockShowHum, temp.lastC(), temp.lastRH(),
+                 battery.lastPercent(), /*forceFull=*/true);
   }
 
   // Clock: every minute redraw the HH:MM line and cycle the bottom reading
