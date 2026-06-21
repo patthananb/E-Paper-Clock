@@ -140,14 +140,18 @@ payload: {"s":19,"sr":294,"w":14,"wr":5214,"st":"allowed","ok":true}
 
 On the panel: boot shows `waiting BLE...`; once payloads arrive the Claude
 screen shows the 5h/7d blocks with a filled daemon-alive dot. PWR cycles
-between the Claude and Clock screens.
+between the Claude and Clock screens. On the Clock screen BOOT refreshes the
+time and flips the bottom reading between temperature and humidity.
 
-On the Clock screen the minute tick redraws the `HH:MM` line and cycles the
-bottom reading between temperature and relative humidity (`SHTC3`), both via
-fast partial updates (no full-screen flash); a full refresh runs every 30 min
-to clear ghosting. The driver emits one `_Update_Part : ...` trace per partial
-update — e.g. the battery refresh every 10 s — and no full-update trace
-between minute ticks:
+**Every render is a partial update — the panel never full-flashes during normal
+use.** Whole-screen redraws (`showStatus`/`showUsage`/`showClock`) draw into a
+full-window *partial* refresh via `beginFrame()`; the per-component updates
+(battery icon, clock `HH:MM`, temp/humidity line) are small partial windows.
+To stop ghosting building up, every 10th whole-screen redraw — and the Clock
+screen's 30-min tick — forces one true full refresh (the only time it flashes).
+
+The driver emits `_Update_Part : ...` for partial refreshes and `_Update_Full`
+only for those periodic ghost cleans, e.g.:
 
 ```
 _Update_Part : 308000
@@ -161,8 +165,8 @@ Build: `pio run`, env `esp32-s3-epaper-154`, ESP32-S3 (8 MB flash), Arduino
 
 | Segment | Used | Total | % |
 |---------|------|-------|---|
-| RAM | 59400 B | 327680 B | 18.1% |
-| Flash | 1302105 B | 3342336 B | 39.0% |
+| RAM | 59416 B | 327680 B | 18.1% |
+| Flash | 1302389 B | 3342336 B | 39.0% |
 
 ## Known limitations
 

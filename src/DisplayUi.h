@@ -12,10 +12,12 @@ class DisplayUi {
 public:
   void begin();
 
-  void showStatus(const char* line, int batPct);
-  void showUsage(const UsageData& m, int batPct, bool daemonAlive);
+  // Whole-screen renders. They default to a partial (no-flash) full-window
+  // update; pass forceFull=true to force a true full refresh (ghost clean).
+  void showStatus(const char* line, int batPct, bool forceFull = false);
+  void showUsage(const UsageData& m, int batPct, bool daemonAlive, bool forceFull = false);
   void showClock(bool haveTime, const struct tm& tm, bool showHumidity,
-                 float tempC, float rh, int batPct);
+                 float tempC, float rh, int batPct, bool forceFull = false);
   void updateClockTime(bool haveTime, const struct tm& tm);          ///< partial: HH:MM only, no flash
   void updateClockReading(bool showHumidity, float tempC, float rh); ///< partial: bottom temp/humidity line
 

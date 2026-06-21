@@ -33,6 +33,18 @@ static void fmtReading(bool showHumidity, float tempC, float rh, char* out, size
   }
 }
 
+// Whole-screen redraws use a partial (no-flash) update over the full 200x200
+// window. Every GHOST_CLEAN_EVERY-th redraw — and any forced one — uses a true
+// full refresh to clear accumulated e-paper ghosting.
+static constexpr uint16_t GHOST_CLEAN_EVERY = 10;
+static uint16_t s_fullDrawCount = 0;
+static void beginFrame(bool forceFull) {
+  if (forceFull || s_fullDrawCount++ % GHOST_CLEAN_EVERY == 0)
+    display.setFullWindow();                      // true full refresh (one flash)
+  else
+    display.setPartialWindow(0, 0, 200, 200);     // full-area partial, no flash
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 // Battery icon with `litSegs` of 4 filled (sweep animation passes raw counts).
@@ -103,8 +115,8 @@ void DisplayUi::begin() {
   display.setRotation(0);
 }
 
-void DisplayUi::showStatus(const char* line, int batPct) {
-  display.setFullWindow();
+void DisplayUi::showStatus(const char* line, int batPct, bool forceFull) {
+  beginFrame(forceFull);
   display.firstPage();
   do {
     display.fillScreen(GxEPD_WHITE);
@@ -115,8 +127,8 @@ void DisplayUi::showStatus(const char* line, int batPct) {
   } while (display.nextPage());
 }
 
-void DisplayUi::showUsage(const UsageData& m, int batPct, bool daemonAlive) {
-  display.setFullWindow();
+void DisplayUi::showUsage(const UsageData& m, int batPct, bool daemonAlive, bool forceFull) {
+  beginFrame(forceFull);
   display.firstPage();
   do {
     display.fillScreen(GxEPD_WHITE);
@@ -151,8 +163,8 @@ void DisplayUi::showUsage(const UsageData& m, int batPct, bool daemonAlive) {
 }
 
 void DisplayUi::showClock(bool haveTime, const struct tm& tm, bool showHumidity,
-                          float tempC, float rh, int batPct) {
-  display.setFullWindow();
+                          float tempC, float rh, int batPct, bool forceFull) {
+  beginFrame(forceFull);
   display.firstPage();
   do {
     display.fillScreen(GxEPD_WHITE);

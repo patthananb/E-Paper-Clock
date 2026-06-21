@@ -109,7 +109,10 @@ void loop() {
     temp.read();
     if (millis() - g_lastClockFull >= 1800000) {
       g_lastClockFull = millis();
-      renderCurrent();                     // full clean (flashes once / 30 min)
+      struct tm tm;
+      bool haveTime = timeSync.localTime(tm);
+      ui.showClock(haveTime, tm, g_clockShowHum, temp.lastC(), temp.lastRH(),
+                   battery.lastPercent(), /*forceFull=*/true);  // ghost clean, one flash / 30 min
     } else {
       struct tm tm;
       bool haveTime = timeSync.localTime(tm);
