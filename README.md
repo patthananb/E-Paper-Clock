@@ -20,7 +20,7 @@ Two modes, cycled with the **PWR** button:
 | Mode | Shows |
 |------|-------|
 | **Claude** | 5h and 7d rate-limit utilization (%, bar, reset countdown) + a daemon-alive dot |
-| **Clock** | `HH:MM` (WiFi/NTP), date, and SHTC3 temperature |
+| **Clock** | `HH:MM` (RTC-backed, NTP-corrected), date, and SHTC3 temperature |
 
 Every screen carries a 4-segment battery icon (top-right) that animates a
 left-to-right sweep while charging.
@@ -59,7 +59,8 @@ Firmware is split into small single-responsibility classes under `src/`:
 | `UsageData.h` | Usage payload struct + JSON parser |
 | `BatteryGauge.{h,cpp}` | ADC battery %, charging heuristic |
 | `TempSensor.{h,cpp}` | SHTC3 temperature (I2C) |
-| `TimeSync.{h,cpp}` | One-shot WiFi NTP sync |
+| `Rtc.{h,cpp}` | PCF85063 battery-backed RTC (I2C) |
+| `TimeSync.{h,cpp}` | System clock: seed from RTC on boot, WiFi NTP sync, write back to RTC |
 | `Buttons.{h,cpp}` | Debounced PWR click |
 
 ### BLE GATT contract (identical to Clawdmeter)
@@ -129,14 +130,21 @@ use Clawdmeter's `install-mac.sh` (installs a launchd agent).
 Expected serial at boot (115200), with the daemon running:
 
 ```
+rtc: seeded 2026-06-21 01:06:33
 wifi: connecting to <ssid>.....
-ntp: 2026-06-21 01:06
+ntp: 2026-06-21 01:06 (rtc updated)
 ready (press 'p' to restart advertising)
 advertising as Clawdmeter
 searching for daemon...
 connected
 payload: {"s":19,"sr":294,"w":14,"wr":5214,"st":"allowed","ok":true}
 ```
+
+The clock now reads from the battery-backed **PCF85063 RTC** first, so time is
+correct **immediately on boot with no WiFi** and **survives a power-off**. NTP
+(every 10 min, and on BOOT long-hold) corrects the clock and writes the result
+back to the RTC. First-ever boot on a board whose RTC was never set logs
+`rtc: no valid time (will wait for NTP)` until the first NTP sync seeds it.
 
 On the panel: boot shows `waiting BLE...`; once payloads arrive the Claude
 screen shows the 5h/7d blocks with a filled daemon-alive dot. PWR cycles
@@ -165,8 +173,8 @@ Build: `pio run`, env `esp32-s3-epaper-154`, ESP32-S3 (8 MB flash), Arduino
 
 | Segment | Used | Total | % |
 |---------|------|-------|---|
-| RAM | 59416 B | 327680 B | 18.1% |
-| Flash | 1302389 B | 3342336 B | 39.0% |
+| RAM | 59432 B | 327680 B | 18.1% |
+| Flash | 1305929 B | 3342336 B | 39.1% |
 
 ## Known limitations
 
